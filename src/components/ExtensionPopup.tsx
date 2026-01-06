@@ -1,263 +1,135 @@
-import { useState, useEffect } from "react";
-import { StatusIndicator } from "./StatusIndicator";
-import { PriceDisplay } from "./PriceDisplay";
-import { DiffPreview } from "./DiffPreview";
-import { SourceUrlInput } from "./SourceUrlInput";
-import { ReplacementRuleForm } from "./ReplacementRuleForm";
-import { ActionButtons } from "./ActionButtons";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, AlertCircle, CheckCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Search, Replace, CheckCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getSettings, saveUndoSnapshot, getUndoSnapshot, addHistoryEntry } from "@/lib/storage";
-import { extractPrice, findMatches, applyReplacement, formatPrice } from "@/lib/priceUtils";
-import type { 
-  ExtensionState, 
-  ExtensionSettings, 
-  ReplacementRule, 
-  PreviewResult,
-  PriceSource,
-} from "@/types/extension";
 
 export function ExtensionPopup() {
   const { toast } = useToast();
-  const [state, setState] = useState<ExtensionState>({ status: 'idle' });
-  const [settings, setSettings] = useState<ExtensionSettings | null>(null);
-  const [currentRule, setCurrentRule] = useState<ReplacementRule | null>(null);
-  const [isOnAllowedDomain, setIsOnAllowedDomain] = useState(true);
-  const [editorContent, setEditorContent] = useState<string>('');
-  const [currentTabId, setCurrentTabId] = useState<number>(0);
+  const [oldPrice, setOldPrice] = useState<string>('');
+  const [newPrice, setNewPrice] = useState<string>('');
+  const [foundCount, setFoundCount] = useState<number | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
 
-  useEffect(() => {
-    loadSettings();
-    checkCurrentTab();
-  }, []);
-
-  const loadSettings = async () => {
-    const s = await getSettings();
-    setSettings(s);
-  };
-
-  const checkCurrentTab = async () => {
-    // In a real extension, we'd check chrome.tabs.query
-    // For demo, we'll simulate being on an allowed domain
-    setIsOnAllowedDomain(true);
-    setCurrentTabId(1);
-    
-    // Simulate getting editor content
-    setEditorContent(`{
-  "products": [
-    {
-      "name": "Widget Pro",
-      "price": "12.90",
-      "currency": "EUR"
-    },
-    {
-      "name": "Widget Basic",
-      "price": "8.50",
-      "currency": "EUR"
-    }
-  ]
-}`);
-  };
-
-  const handleFetchPrice = async (url: string, selector: string, regexCleanup: string) => {
-    setState(prev => ({ ...prev, status: 'fetching', error: undefined }));
-
-    try {
-      // In a real extension, this would use chrome.tabs or fetch with CORS handling
-      // For demo, we'll simulate fetching a price
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Simulated extracted value
-      const rawValue = "€14,90";
-      const normalizedPrice = extractPrice(rawValue, regexCleanup);
-      
-      const priceSource: PriceSource = {
-        url,
-        selector,
-        regexCleanup,
-        lastFetched: new Date().toISOString(),
-        extractedPrice: normalizedPrice,
-        rawValue,
-      };
-
-      setState(prev => ({ 
-        ...prev, 
-        status: 'ready',
-        priceSource,
-        previewResult: undefined,
-      }));
-
+  const handleCheckPrices = async () => {
+    if (!oldPrice.trim()) {
       toast({
-        title: "Price extracted",
-        description: `Found: ${normalizedPrice}`,
-      });
-    } catch (error) {
-      setState(prev => ({ 
-        ...prev, 
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Failed to fetch price',
-      }));
-      
-      toast({
-        title: "Error",
-        description: "Failed to fetch price from source",
+        title: "Erreur",
+        description: "Veuillez entrer un ancien prix",
         variant: "destructive",
       });
+      return;
     }
-  };
 
-  const handleFindMatches = async () => {
-    if (!currentRule || !state.priceSource?.extractedPrice) return;
-
-    setState(prev => ({ ...prev, status: 'previewing' }));
+    setIsChecking(true);
+    setFoundCount(null);
 
     try {
-      const matches = findMatches(editorContent, currentRule);
-      
-      const previewResult: PreviewResult = {
-        matches,
-        originalContent: editorContent,
-        newContent: applyReplacement(
-          editorContent, 
-          currentRule, 
-          state.priceSource.extractedPrice,
-          {
-            separator: currentRule.formatOption === 'keep' ? 'dot' : currentRule.formatOption,
-            currencySymbol: currentRule.currencySymbol,
-            currencyPosition: currentRule.currencyPosition,
-          }
-        ),
-      };
+      // Envoyer un message au content script pour chercher les prix
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-      setState(prev => ({ ...prev, status: 'ready', previewResult }));
+      if (!tab.id) {
+        throw new Error("Aucun onglet actif trouvé");
+      }
 
-      if (matches.length === 0) {
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'findPrices',
+        oldPrice: oldPrice.trim(),
+      });
+
+      if (response.success) {
+        setFoundCount(response.count);
         toast({
-          title: "No matches found",
-          description: "The pattern didn't match any content in the editor",
-          variant: "destructive",
+          title: response.count > 0 ? "Prix trouvés !" : "Aucun prix trouvé",
+          description: response.count > 0
+            ? `${response.count} occurrence(s) de "${oldPrice}" trouvée(s) sur la page`
+            : `Le prix "${oldPrice}" n'a pas été trouvé sur la page`,
         });
       } else {
-        toast({
-          title: `Found ${matches.length} match${matches.length > 1 ? 'es' : ''}`,
-          description: "Review the preview before applying",
-        });
+        throw new Error(response.error || "Erreur inconnue");
       }
     } catch (error) {
-      setState(prev => ({ 
-        ...prev, 
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Failed to find matches',
-      }));
+      console.error('Error checking prices:', error);
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Impossible de vérifier les prix",
+        variant: "destructive",
+      });
+    } finally {
+      setIsChecking(false);
     }
   };
 
-  const handleApply = async () => {
-    if (!state.previewResult || !state.priceSource) return;
+  const handleApplyChanges = async () => {
+    if (!oldPrice.trim() || !newPrice.trim()) {
+      toast({
+        title: "Erreur",
+        description: "Veuillez entrer l'ancien et le nouveau prix",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    setState(prev => ({ ...prev, status: 'applying' }));
+    if (foundCount === null) {
+      toast({
+        title: "Erreur",
+        description: "Veuillez d'abord vérifier les prix",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (foundCount === 0) {
+      toast({
+        title: "Erreur",
+        description: "Aucun prix à remplacer",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsApplying(true);
 
     try {
-      // Save undo snapshot
-      await saveUndoSnapshot({
-        tabId: currentTabId,
-        content: state.previewResult.originalContent,
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+      if (!tab.id) {
+        throw new Error("Aucun onglet actif trouvé");
+      }
+
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'replacePrices',
+        oldPrice: oldPrice.trim(),
+        newPrice: newPrice.trim(),
       });
 
-      // In a real extension, we'd inject the new content into the editor
-      setEditorContent(state.previewResult.newContent);
-
-      // Add to history
-      await addHistoryEntry({
-        id: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-        sourceUrl: state.priceSource.url,
-        oldPrice: currentRule?.oldPricePattern || '',
-        newPrice: state.priceSource.extractedPrice || '',
-        matchCount: state.previewResult.matches.length,
-        domain: window.location.hostname,
-      });
-
-      setState(prev => ({ 
-        ...prev, 
-        status: 'success',
-        undoSnapshot: {
-          tabId: currentTabId,
-          content: state.previewResult!.originalContent,
-          timestamp: new Date().toISOString(),
-          url: window.location.href,
-        },
-      }));
-
-      toast({
-        title: "Replacement applied",
-        description: `Updated ${state.previewResult.matches.length} occurrence${state.previewResult.matches.length > 1 ? 's' : ''}`,
-      });
+      if (response.success) {
+        toast({
+          title: "Succès !",
+          description: `${response.count} prix mis à jour avec succès`,
+        });
+        setFoundCount(null);
+        setOldPrice('');
+        setNewPrice('');
+      } else {
+        throw new Error(response.error || "Erreur inconnue");
+      }
     } catch (error) {
-      setState(prev => ({ 
-        ...prev, 
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Failed to apply replacement',
-      }));
-      
+      console.error('Error applying changes:', error);
       toast({
-        title: "Error",
-        description: "Failed to apply replacement",
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Impossible d'appliquer les changements",
         variant: "destructive",
       });
+    } finally {
+      setIsApplying(false);
     }
   };
-
-  const handleUndo = async () => {
-    const snapshot = await getUndoSnapshot(currentTabId);
-    
-    if (snapshot) {
-      setEditorContent(snapshot.content);
-      setState(prev => ({ ...prev, status: 'idle', previewResult: undefined }));
-      
-      toast({
-        title: "Undo successful",
-        description: "Content restored to previous state",
-      });
-    } else {
-      toast({
-        title: "Nothing to undo",
-        description: "No previous snapshot found for this tab",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const canApply = !!(
-    state.previewResult && 
-    state.previewResult.matches.length > 0 &&
-    state.previewResult.matches.length <= (settings?.safetyThreshold || 10)
-  );
-
-  if (!isOnAllowedDomain) {
-    return (
-      <div className="w-80 p-4 bg-background text-foreground">
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <AlertCircle className="w-12 h-12 text-warning mb-4" />
-          <h2 className="text-lg font-semibold mb-2">Not on allowed domain</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            This extension only works on configured CMS domains.
-          </p>
-          <Button variant="outline" size="sm" onClick={() => window.open('#/options', '_blank')}>
-            <Settings className="w-4 h-4 mr-2" />
-            Configure Domains
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="w-96 min-h-[500px] bg-background text-foreground">
+    <div className="w-96 bg-background text-foreground">
       <header className="flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -265,113 +137,90 @@ export function ExtensionPopup() {
           </div>
           <div>
             <h1 className="text-sm font-semibold">Price Updater</h1>
-            <StatusIndicator status={state.status} />
+            <p className="text-xs text-muted-foreground">Remplacer les prix sur la page</p>
           </div>
         </div>
-        <Button variant="ghost" size="icon" onClick={() => window.open('#/options', '_blank')}>
-          <Settings className="w-4 h-4" />
-        </Button>
       </header>
 
-      <Tabs defaultValue="scrape" className="w-full">
-        <TabsList className="w-full grid grid-cols-2 p-1 mx-4 mt-4" style={{ width: 'calc(100% - 2rem)' }}>
-          <TabsTrigger value="scrape">Scrape</TabsTrigger>
-          <TabsTrigger value="replace">Replace</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="scrape" className="p-4 space-y-4">
-          <SourceUrlInput
-            defaultSelector={settings?.defaultSelector}
-            defaultRegexCleanup={settings?.defaultRegexCleanup}
-            isLoading={state.status === 'fetching'}
-            onFetch={handleFetchPrice}
+      <div className="p-6 space-y-6">
+        {/* Champ Ancien Prix */}
+        <div className="space-y-2">
+          <Label htmlFor="oldPrice" className="text-sm font-medium">
+            Ancien prix
+          </Label>
+          <Input
+            id="oldPrice"
+            type="text"
+            placeholder="Ex: 19.99"
+            value={oldPrice}
+            onChange={(e) => setOldPrice(e.target.value)}
+            className="w-full"
           />
-
-          {state.priceSource?.extractedPrice && (
-            <PriceDisplay
-              price={state.priceSource.extractedPrice}
-              rawValue={state.priceSource.rawValue}
-              sourceUrl={state.priceSource.url}
-              timestamp={state.priceSource.lastFetched}
-            />
-          )}
-
-          {state.error && (
-            <div className="glass-panel p-3 border-destructive/50 bg-destructive/10">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-destructive mt-0.5" />
-                <p className="text-xs text-destructive">{state.error}</p>
-              </div>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="replace" className="p-4 space-y-4">
-          {state.priceSource?.extractedPrice ? (
-            <>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-success/10 border border-success/30">
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-success" />
-                  <span className="text-sm">New price ready</span>
-                </div>
-                <span className="price-badge">{state.priceSource.extractedPrice}</span>
-              </div>
-
-              <ReplacementRuleForm
-                templates={settings?.templates}
-                onRuleChange={setCurrentRule}
-              />
-
-              {state.previewResult && (
-                <DiffPreview
-                  matches={state.previewResult.matches}
-                  newPrice={formatPrice(
-                    state.priceSource.extractedPrice,
-                    {
-                      separator: currentRule?.formatOption === 'keep' ? 'dot' : (currentRule?.formatOption || 'dot'),
-                      currencySymbol: currentRule?.currencySymbol,
-                      currencyPosition: currentRule?.currencyPosition,
-                    }
-                  )}
-                  safetyThreshold={settings?.safetyThreshold || 10}
-                />
-              )}
-
-              <ActionButtons
-                status={state.status}
-                hasPrice={!!state.priceSource?.extractedPrice}
-                hasPreview={!!state.previewResult}
-                canApply={canApply}
-                canUndo={!!state.undoSnapshot}
-                onFindMatches={handleFindMatches}
-                onApply={handleApply}
-                onUndo={handleUndo}
-              />
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-                <span className="text-2xl">📊</span>
-              </div>
-              <h3 className="text-sm font-medium mb-2">No price fetched</h3>
-              <p className="text-xs text-muted-foreground">
-                Go to the Scrape tab to fetch a price first
-              </p>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
-
-      {/* Editor Preview (for demo) */}
-      <div className="p-4 border-t border-border">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-muted-foreground uppercase tracking-wide">
-            Editor Content (Demo)
-          </span>
         </div>
-        <pre className="code-block max-h-32 overflow-auto text-[10px]">
-          {editorContent}
-        </pre>
+
+        {/* Champ Nouveau Prix */}
+        <div className="space-y-2">
+          <Label htmlFor="newPrice" className="text-sm font-medium">
+            Nouveau prix
+          </Label>
+          <Input
+            id="newPrice"
+            type="text"
+            placeholder="Ex: 24.99"
+            value={newPrice}
+            onChange={(e) => setNewPrice(e.target.value)}
+            className="w-full"
+          />
+        </div>
+
+        {/* Affichage du résultat */}
+        {foundCount !== null && (
+          <div className={`p-3 rounded-lg border ${
+            foundCount > 0
+              ? 'bg-green-50 border-green-200 dark:bg-green-950 dark:border-green-800'
+              : 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950 dark:border-yellow-800'
+          }`}>
+            <div className="flex items-center gap-2">
+              {foundCount > 0 ? (
+                <>
+                  <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  <span className="text-sm font-medium text-green-800 dark:text-green-200">
+                    {foundCount} prix trouvé{foundCount > 1 ? 's' : ''} sur la page
+                  </span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+                  <span className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                    Aucun prix trouvé sur la page
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Boutons */}
+        <div className="space-y-3">
+          <Button
+            onClick={handleCheckPrices}
+            disabled={isChecking || !oldPrice.trim()}
+            className="w-full"
+            variant="outline"
+          >
+            <Search className="w-4 h-4 mr-2" />
+            {isChecking ? 'Vérification...' : 'Vérifier les prix'}
+          </Button>
+
+          <Button
+            onClick={handleApplyChanges}
+            disabled={isApplying || !oldPrice.trim() || !newPrice.trim() || foundCount === null || foundCount === 0}
+            className="w-full"
+          >
+            <Replace className="w-4 h-4 mr-2" />
+            {isApplying ? 'Application...' : 'Appliquer les changements'}
+          </Button>
+        </div>
       </div>
     </div>
   );
