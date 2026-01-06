@@ -38,8 +38,11 @@
     return textNodes;
   }
 
-  // Compter le nombre d'occurrences d'un prix sur la page
+  // Compter le nombre d'occurrences d'un prix sur la page et les mettre en surbrillance
   function countPriceOccurrences(price) {
+    // D'abord, nettoyer les anciennes surbrillances
+    removeHighlights();
+
     const textNodes = findTextNodesWithPrice(price);
     let count = 0;
 
@@ -47,14 +50,37 @@
       const matches = node.textContent.match(new RegExp(escapeRegex(price), 'g'));
       if (matches) {
         count += matches.length;
+
+        // Mettre en surbrillance l'élément parent
+        if (node.parentElement) {
+          node.parentElement.classList.add('price-updater-highlight');
+          node.parentElement.style.backgroundColor = '#fef08a'; // jaune clair
+          node.parentElement.style.transition = 'background-color 0.3s';
+          node.parentElement.style.outline = '2px solid #eab308'; // bordure jaune
+          node.parentElement.style.outlineOffset = '2px';
+        }
       }
     });
 
     return count;
   }
 
+  // Supprimer toutes les surbrillances
+  function removeHighlights() {
+    const highlighted = document.querySelectorAll('.price-updater-highlight');
+    highlighted.forEach(el => {
+      el.classList.remove('price-updater-highlight');
+      el.style.backgroundColor = '';
+      el.style.outline = '';
+      el.style.outlineOffset = '';
+    });
+  }
+
   // Remplacer un prix par un autre
   function replacePrices(oldPrice, newPrice) {
+    // D'abord, nettoyer les surbrillances de recherche
+    removeHighlights();
+
     const textNodes = findTextNodesWithPrice(oldPrice);
     let count = 0;
 
@@ -68,13 +94,18 @@
         node.textContent = newText;
         count += matches.length;
 
-        // Marquer l'élément parent pour feedback visuel (optionnel)
+        // Marquer l'élément parent avec un effet vert temporaire
         if (node.parentElement) {
           node.parentElement.style.transition = 'background-color 0.5s';
           node.parentElement.style.backgroundColor = '#4ade80';
+          node.parentElement.style.outline = '2px solid #22c55e';
+          node.parentElement.style.outlineOffset = '2px';
+
           setTimeout(() => {
             node.parentElement.style.backgroundColor = '';
-          }, 1000);
+            node.parentElement.style.outline = '';
+            node.parentElement.style.outlineOffset = '';
+          }, 1500);
         }
       }
     });
@@ -115,6 +146,20 @@
         });
       } catch (error) {
         console.error('Error replacing prices:', error);
+        sendResponse({
+          success: false,
+          error: error.message,
+        });
+      }
+      return true;
+    }
+
+    if (request.action === 'clearHighlights') {
+      try {
+        removeHighlights();
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('Error clearing highlights:', error);
         sendResponse({
           success: false,
           error: error.message,
