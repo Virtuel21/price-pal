@@ -13,6 +13,27 @@ export function ExtensionPopup() {
   const [isChecking, setIsChecking] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
 
+  // Fonction pour vérifier si le content script est chargé
+  const ensureContentScript = async (tabId: number) => {
+    try {
+      // Essayer de ping le content script
+      await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+      return true;
+    } catch (error) {
+      // Le content script n'est pas chargé, on l'injecte
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: ['content.js']
+        });
+        return true;
+      } catch (injectError) {
+        console.error('Failed to inject content script:', injectError);
+        return false;
+      }
+    }
+  };
+
   const handleCheckPrices = async () => {
     if (!oldPrice.trim()) {
       toast({
@@ -27,13 +48,20 @@ export function ExtensionPopup() {
     setFoundCount(null);
 
     try {
-      // Envoyer un message au content script pour chercher les prix
+      // Récupérer l'onglet actif
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
       if (!tab.id) {
         throw new Error("Aucun onglet actif trouvé");
       }
 
+      // S'assurer que le content script est chargé
+      const scriptLoaded = await ensureContentScript(tab.id);
+      if (!scriptLoaded) {
+        throw new Error("Impossible de charger le script sur cette page (peut-être une page système de Chrome)");
+      }
+
+      // Envoyer un message au content script pour chercher les prix
       const response = await chrome.tabs.sendMessage(tab.id, {
         action: 'findPrices',
         oldPrice: oldPrice.trim(),
@@ -97,6 +125,12 @@ export function ExtensionPopup() {
 
       if (!tab.id) {
         throw new Error("Aucun onglet actif trouvé");
+      }
+
+      // S'assurer que le content script est chargé
+      const scriptLoaded = await ensureContentScript(tab.id);
+      if (!scriptLoaded) {
+        throw new Error("Impossible de charger le script sur cette page");
       }
 
       const response = await chrome.tabs.sendMessage(tab.id, {
