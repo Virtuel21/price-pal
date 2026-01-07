@@ -4,6 +4,57 @@
 (function() {
   'use strict';
 
+  // Détecter et obtenir l'API de l'éditeur de code
+  function detectCodeEditor(textarea) {
+    // Vérifier si c'est un CodeMirror
+    if (textarea.parentElement && textarea.parentElement.CodeMirror) {
+      return { type: 'codemirror5', api: textarea.parentElement.CodeMirror };
+    }
+
+    // Chercher CodeMirror 6 (plus récent)
+    let element = textarea;
+    while (element && element !== document.body) {
+      if (element.classList && element.classList.contains('cm-editor')) {
+        const view = element.cmView?.view || element.__view;
+        if (view) {
+          return { type: 'codemirror6', api: view };
+        }
+      }
+      element = element.parentElement;
+    }
+
+    // Chercher Monaco Editor
+    if (window.monaco && window.monaco.editor) {
+      const editors = window.monaco.editor.getEditors();
+      for (const editor of editors) {
+        const domNode = editor.getDomNode();
+        if (domNode && domNode.contains(textarea)) {
+          return { type: 'monaco', api: editor };
+        }
+      }
+    }
+
+    // Chercher Ace Editor
+    if (window.ace) {
+      let aceElement = textarea;
+      while (aceElement && aceElement !== document.body) {
+        if (aceElement.classList && aceElement.classList.contains('ace_editor')) {
+          try {
+            const editor = window.ace.edit(aceElement);
+            if (editor) {
+              return { type: 'ace', api: editor };
+            }
+          } catch (e) {
+            // Pas un Ace Editor valide
+          }
+        }
+        aceElement = aceElement.parentElement;
+      }
+    }
+
+    return null;
+  }
+
   // Fonction pour trouver tous les textarea et inputs contenant un prix
   function findTextFieldsWithPrice(price) {
     const fields = [];
@@ -14,7 +65,12 @@
       const textareas = doc.querySelectorAll('textarea');
       textareas.forEach(textarea => {
         if (textarea.value.includes(price)) {
-          fields.push({ type: 'textarea', element: textarea });
+          const editor = detectCodeEditor(textarea);
+          fields.push({
+            type: editor ? editor.type : 'textarea',
+            element: textarea,
+            editorAPI: editor ? editor.api : null
+          });
         }
       });
 
@@ -22,7 +78,7 @@
       const inputs = doc.querySelectorAll('input[type="text"], input:not([type])');
       inputs.forEach(input => {
         if (input.value.includes(price)) {
-          fields.push({ type: 'input', element: input });
+          fields.push({ type: 'input', element: input, editorAPI: null });
         }
       });
 
@@ -30,7 +86,7 @@
       const editables = doc.querySelectorAll('[contenteditable="true"]');
       editables.forEach(editable => {
         if (editable.textContent.includes(price)) {
-          fields.push({ type: 'contenteditable', element: editable });
+          fields.push({ type: 'contenteditable', element: editable, editorAPI: null });
         }
       });
     }
@@ -146,7 +202,30 @@
     // Compter dans les champs de texte (textarea, input, contenteditable)
     const textFields = findTextFieldsWithPrice(price);
     textFields.forEach(field => {
-      const content = field.type === 'contenteditable' ? field.element.textContent : field.element.value;
+      let content = '';
+
+      // Obtenir le contenu selon le type d'éditeur
+      if (field.editorAPI) {
+        switch (field.type) {
+          case 'codemirror5':
+            content = field.editorAPI.getValue();
+            break;
+          case 'codemirror6':
+            content = field.editorAPI.state.doc.toString();
+            break;
+          case 'monaco':
+            content = field.editorAPI.getValue();
+            break;
+          case 'ace':
+            content = field.editorAPI.getValue();
+            break;
+        }
+      } else if (field.type === 'contenteditable') {
+        content = field.element.textContent;
+      } else {
+        content = field.element.value;
+      }
+
       const matches = content.match(regex);
       if (matches) {
         count += matches.length;
@@ -212,24 +291,92 @@
     // Remplacer dans les champs de texte (textarea, input, contenteditable)
     const textFields = findTextFieldsWithPrice(oldPrice);
     textFields.forEach(field => {
-      const isContentEditable = field.type === 'contenteditable';
-      const originalContent = isContentEditable ? field.element.textContent : field.element.value;
-      const matches = originalContent.match(regex);
+      let originalContent = '';
+      let matches = null;
+
+      // Obtenir le contenu selon le type d'éditeur
+      if (field.editorAPI) {
+        // Utiliser l'API de l'éditeur de code
+        switch (field.type) {
+          case 'codemirror5':
+            originalContent = field.editorAPI.getValue();
+            break;
+          case 'codemirror6':
+            originalContent = field.editorAPI.state.doc.toString();
+            break;
+          case 'monaco':
+            originalContent = field.editorAPI.getValue();
+            break;
+          case 'ace':
+            originalContent = field.editorAPI.getValue();
+            break;
+        }
+      } else if (field.type === 'contenteditable') {
+        originalContent = field.element.textContent;
+      } else {
+        originalContent = field.element.value;
+      }
+
+      matches = originalContent.match(regex);
 
       if (matches) {
         const newContent = originalContent.replace(regex, newPrice);
-
-        if (isContentEditable) {
-          field.element.textContent = newContent;
-        } else {
-          field.element.value = newContent;
-        }
-
         count += matches.length;
 
-        // Déclencher les événements pour que les frameworks détectent le changement
-        field.element.dispatchEvent(new Event('input', { bubbles: true }));
-        field.element.dispatchEvent(new Event('change', { bubbles: true }));
+        // Appliquer le changement selon le type d'éditeur
+        if (field.editorAPI) {
+          try {
+            switch (field.type) {
+              case 'codemirror5':
+                field.editorAPI.setValue(newContent);
+                field.editorAPI.refresh();
+                break;
+              case 'codemirror6':
+                field.editorAPI.dispatch({
+                  changes: {
+                    from: 0,
+                    to: field.editorAPI.state.doc.length,
+                    insert: newContent
+                  }
+                });
+                break;
+              case 'monaco':
+                field.editorAPI.setValue(newContent);
+                break;
+              case 'ace':
+                const cursorPos = field.editorAPI.getCursorPosition();
+                field.editorAPI.setValue(newContent, -1);
+                field.editorAPI.moveCursorToPosition(cursorPos);
+                break;
+            }
+            console.log(`[Price Updater] Updated ${field.type} editor successfully`);
+          } catch (error) {
+            console.error(`[Price Updater] Error updating ${field.type}:`, error);
+          }
+        } else if (field.type === 'contenteditable') {
+          field.element.textContent = newContent;
+          field.element.dispatchEvent(new Event('input', { bubbles: true }));
+          field.element.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          // Textarea ou input standard
+          // Pour React et autres frameworks modernes, utiliser le setter natif
+          try {
+            const isTextarea = field.element.tagName === 'TEXTAREA';
+            const prototype = isTextarea ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
+            nativeInputValueSetter.call(field.element, newContent);
+          } catch (e) {
+            // Fallback sur la méthode simple
+            field.element.value = newContent;
+          }
+
+          // Déclencher plusieurs événements pour assurer la compatibilité
+          const events = ['input', 'change', 'keyup'];
+          events.forEach(eventType => {
+            const event = new Event(eventType, { bubbles: true });
+            field.element.dispatchEvent(event);
+          });
+        }
 
         // Effet vert temporaire
         field.element.style.transition = 'background-color 0.5s';
