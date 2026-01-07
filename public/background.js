@@ -10,6 +10,11 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
+// Ouvrir le side panel quand on clique sur l'icône de l'extension
+chrome.action.onClicked.addListener((tab) => {
+  chrome.sidePanel.open({ windowId: tab.windowId });
+});
+
 // Garder le service worker actif
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Pour éviter que le service worker ne s'endorme

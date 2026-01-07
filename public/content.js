@@ -232,7 +232,7 @@
     // D'abord, nettoyer les anciennes surbrillances
     removeHighlights();
 
-    const regex = new RegExp(escapeRegex(price), 'g');
+    const regex = createSmartPriceRegex(price);
     let count = 0;
 
     // Compter dans les nœuds de texte normaux
@@ -312,7 +312,7 @@
     // D'abord, nettoyer les surbrillances de recherche
     removeHighlights();
 
-    const regex = new RegExp(escapeRegex(oldPrice), 'g');
+    const regex = createSmartPriceRegex(oldPrice);
     let count = 0;
 
     // Remplacer dans les nœuds de texte normaux
@@ -452,6 +452,24 @@
   // Échapper les caractères spéciaux pour RegExp
   function escapeRegex(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Normaliser un prix pour accepter à la fois virgule et point
+  // Ex: "3,99" trouvera aussi "3.99" et vice versa
+  function normalizePricePattern(price) {
+    // Échapper les caractères spéciaux sauf la virgule et le point
+    let normalized = price.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Remplacer la virgule ou le point par un pattern qui accepte les deux
+    normalized = normalized.replace(/[.,]/g, '[.,]');
+
+    return normalized;
+  }
+
+  // Créer une regex intelligente qui accepte virgule et point
+  function createSmartPriceRegex(price) {
+    const pattern = normalizePricePattern(price);
+    return new RegExp(pattern, 'g');
   }
 
   // Écouter les messages depuis le popup

@@ -185,11 +185,14 @@ export function ExtensionPopup() {
           <Input
             id="oldPrice"
             type="text"
-            placeholder="Ex: 19.99"
+            placeholder="Ex: 19.99 ou 19,99"
             value={oldPrice}
             onChange={(e) => setOldPrice(e.target.value)}
             className="w-full"
           />
+          <p className="text-xs text-muted-foreground">
+            💡 Trouvera automatiquement "19.99" et "19,99"
+          </p>
         </div>
 
         {/* Champ Nouveau Prix */}
