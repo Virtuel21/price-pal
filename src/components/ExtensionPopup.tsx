@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Search, Replace, CheckCircle, AlertCircle } from "lucide-react";
+import { Search, Replace, CheckCircle, AlertCircle, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export function ExtensionPopup() {
@@ -162,6 +162,77 @@ export function ExtensionPopup() {
     }
   };
 
+  const handleDeletePrices = async () => {
+    if (!oldPrice.trim()) {
+      toast({
+        title: "Erreur",
+        description: "Veuillez entrer un prix à supprimer",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (foundCount === null) {
+      toast({
+        title: "Erreur",
+        description: "Veuillez d'abord vérifier les prix",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (foundCount === 0) {
+      toast({
+        title: "Erreur",
+        description: "Aucun prix à supprimer",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsApplying(true);
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+      if (!tab.id) {
+        throw new Error("Aucun onglet actif trouvé");
+      }
+
+      // S'assurer que le content script est chargé
+      const scriptLoaded = await ensureContentScript(tab.id);
+      if (!scriptLoaded) {
+        throw new Error("Impossible de charger le script sur cette page");
+      }
+
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        action: 'replacePrices',
+        oldPrice: oldPrice.trim(),
+        newPrice: '', // Chaîne vide pour supprimer
+      });
+
+      if (response.success) {
+        toast({
+          title: "Supprimé !",
+          description: `${response.count} prix supprimé${response.count > 1 ? 's' : ''} avec succès`,
+        });
+        setFoundCount(null);
+        setOldPrice('');
+      } else {
+        throw new Error(response.error || "Erreur inconnue");
+      }
+    } catch (error) {
+      console.error('Error deleting prices:', error);
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Impossible de supprimer les prix",
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
   return (
     <div className="w-96 bg-background text-foreground">
       <header className="flex items-center justify-between p-4 border-b border-border">
@@ -198,16 +269,19 @@ export function ExtensionPopup() {
         {/* Champ Nouveau Prix */}
         <div className="space-y-2">
           <Label htmlFor="newPrice" className="text-sm font-medium">
-            Nouveau prix
+            Nouveau prix <span className="text-muted-foreground font-normal">(optionnel)</span>
           </Label>
           <Input
             id="newPrice"
             type="text"
-            placeholder="Ex: 24.99"
+            placeholder="Ex: 24.99 (laisser vide pour supprimer)"
             value={newPrice}
             onChange={(e) => setNewPrice(e.target.value)}
             className="w-full"
           />
+          <p className="text-xs text-muted-foreground">
+            💡 Laissez vide et cliquez "Supprimer" pour enlever le prix
+          </p>
         </div>
 
         {/* Affichage du résultat */}
@@ -249,14 +323,26 @@ export function ExtensionPopup() {
             {isChecking ? 'Vérification...' : 'Vérifier les prix'}
           </Button>
 
-          <Button
-            onClick={handleApplyChanges}
-            disabled={isApplying || !oldPrice.trim() || !newPrice.trim() || foundCount === null || foundCount === 0}
-            className="w-full"
-          >
-            <Replace className="w-4 h-4 mr-2" />
-            {isApplying ? 'Application...' : 'Appliquer les changements'}
-          </Button>
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              onClick={handleDeletePrices}
+              disabled={isApplying || !oldPrice.trim() || foundCount === null || foundCount === 0}
+              className="w-full"
+              variant="destructive"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              {isApplying ? 'Suppression...' : 'Supprimer'}
+            </Button>
+
+            <Button
+              onClick={handleApplyChanges}
+              disabled={isApplying || !oldPrice.trim() || !newPrice.trim() || foundCount === null || foundCount === 0}
+              className="w-full"
+            >
+              <Replace className="w-4 h-4 mr-2" />
+              {isApplying ? 'Application...' : 'Remplacer'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
