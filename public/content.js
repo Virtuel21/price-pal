@@ -6,9 +6,25 @@
 
   // Détecter et obtenir l'API de l'éditeur de code
   function detectCodeEditor(textarea) {
-    // Vérifier si c'est un CodeMirror
+    // Vérifier si c'est un CodeMirror (méthode 1: via parentElement)
     if (textarea.parentElement && textarea.parentElement.CodeMirror) {
       return { type: 'codemirror5', api: textarea.parentElement.CodeMirror };
+    }
+
+    // Vérifier si c'est un CodeMirror (méthode 2: via nextSibling pour CodePen)
+    if (textarea.nextSibling && textarea.nextSibling.CodeMirror) {
+      return { type: 'codemirror5', api: textarea.nextSibling.CodeMirror };
+    }
+
+    // Chercher dans tout le document pour CodeMirror
+    const allCodeMirrors = document.querySelectorAll('.CodeMirror');
+    for (const cm of allCodeMirrors) {
+      if (cm.CodeMirror) {
+        const cmTextarea = cm.CodeMirror.getTextArea();
+        if (cmTextarea === textarea) {
+          return { type: 'codemirror5', api: cm.CodeMirror };
+        }
+      }
     }
 
     // Chercher CodeMirror 6 (plus récent)
@@ -55,16 +71,54 @@
     return null;
   }
 
+  // Trouver tous les éditeurs CodeMirror sur la page (pour CodePen et autres)
+  function findAllCodeMirrorEditors() {
+    const editors = [];
+
+    // Chercher tous les éléments .CodeMirror
+    const codeMirrorElements = document.querySelectorAll('.CodeMirror');
+    codeMirrorElements.forEach(el => {
+      if (el.CodeMirror) {
+        editors.push({
+          type: 'codemirror5',
+          element: el,
+          editorAPI: el.CodeMirror
+        });
+      }
+    });
+
+    return editors;
+  }
+
   // Fonction pour trouver tous les textarea et inputs contenant un prix
   function findTextFieldsWithPrice(price) {
     const fields = [];
 
     // Fonction pour chercher dans un document
     function searchInDocument(doc) {
-      // Chercher dans les textarea
+      // D'abord, chercher tous les éditeurs CodeMirror directement (pour CodePen)
+      const codeMirrorEditors = doc.querySelectorAll('.CodeMirror');
+      codeMirrorEditors.forEach(cmElement => {
+        if (cmElement.CodeMirror) {
+          const content = cmElement.CodeMirror.getValue();
+          if (content.includes(price)) {
+            // Trouver le textarea associé ou utiliser l'élément lui-même
+            const textarea = cmElement.CodeMirror.getTextArea() || cmElement;
+            fields.push({
+              type: 'codemirror5',
+              element: textarea,
+              editorAPI: cmElement.CodeMirror
+            });
+          }
+        }
+      });
+
+      // Chercher dans les textarea (qui ne sont pas déjà dans un CodeMirror)
       const textareas = doc.querySelectorAll('textarea');
       textareas.forEach(textarea => {
-        if (textarea.value.includes(price)) {
+        // Vérifier si ce textarea n'est pas déjà traité par CodeMirror
+        const alreadyFound = fields.some(f => f.element === textarea);
+        if (!alreadyFound && textarea.value.includes(price)) {
           const editor = detectCodeEditor(textarea);
           fields.push({
             type: editor ? editor.type : 'textarea',
