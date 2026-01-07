@@ -145,8 +145,7 @@ export function ExtensionPopup() {
           description: `${response.count} prix mis à jour avec succès`,
         });
         setFoundCount(null);
-        setOldPrice('');
-        setNewPrice('');
+        // On garde les champs remplis pour faciliter les remplacements multiples
       } else {
         throw new Error(response.error || "Erreur inconnue");
       }
@@ -217,7 +216,7 @@ export function ExtensionPopup() {
           description: `${response.count} prix supprimé${response.count > 1 ? 's' : ''} avec succès`,
         });
         setFoundCount(null);
-        setOldPrice('');
+        // On garde l'ancien prix pour faciliter les suppressions multiples
       } else {
         throw new Error(response.error || "Erreur inconnue");
       }
